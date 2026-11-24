@@ -1,5 +1,54 @@
 /* Reveal on scroll, one hero moment, and the section index. */
 (function () {
+  // The header sky interpolates through the day: night navy, dawn rose, morning blue,
+  // golden amber, dusk violet, back to night. Every hour is a blend of the two nearest
+  // stops. The text stays dark through the bright hours and light through the rest.
+  var SKY = [
+    [0,   '#0A1124', '#171E3A'],
+    [4,   '#070C1A', '#10162C'],
+    [5,   '#1E1528', '#33202F'],
+    [6,   '#3A2334', '#4E2C3E'],
+    [7,   '#714657', '#815464'],
+    [8,   '#C79FB2', '#D8B6C6'],
+    [9,   '#DCEBF4', '#B8D4E6'],
+    [11,  '#D6E9F4', '#A9CCE4'],
+    [14.5,'#D6E9F4', '#A9CCE4'],
+    [16,  '#F6B24A', '#E08A2E'],
+    [17.5,'#F2A63C', '#DC8428'],
+    [18,  '#D99A5A', '#B87C46'],
+    [19,  '#7C4F60', '#5A3A52'],
+    [20,  '#4A3550', '#3A2A42'],
+    [21,  '#141C38', '#232C52'],
+    [24,  '#0A1124', '#171E3A']
+  ];
+  function mixColor(from, to, t) {
+    var A = parseInt(from.slice(1), 16), B = parseInt(to.slice(1), 16), out = 0;
+    for (var s = 16; s >= 0; s -= 8) {
+      var a = (A >> s) & 255, b = (B >> s) & 255;
+      out |= Math.round(a + (b - a) * t) << s;
+    }
+    return '#' + ('00000' + out.toString(16)).slice(-6);
+  }
+  var root = document.documentElement;
+  function localHour() { return new Date().getHours(); }
+  function paintSky(hour) {
+    var i = 0;
+    while (i < SKY.length - 2 && hour >= SKY[i + 1][0]) i++;
+    var A = SKY[i], B = SKY[i + 1], t = (hour - A[0]) / (B[0] - A[0]);
+    root.style.setProperty('--sky-a', mixColor(A[1], B[1], t));
+    root.style.setProperty('--sky-b', mixColor(A[2], B[2], t));
+    // Dark text through the bright hours, light text through night, dawn and dusk.
+    root.style.setProperty('--sky-ink', hour >= 8 && hour <= 18 ? '#1B1216' : '#F4EDE1');
+    // Lavender streaks peak at golden hour and are gone by dusk.
+    root.style.setProperty('--streak', (hour < 15 || hour > 19 ? 0 : 1 - Math.abs(hour - 17) / 2).toFixed(2));
+  }
+  // Starts on the visitor's own clock and follows it as hours pass.
+  paintSky(localHour());
+  setInterval(function () { paintSky(localHour()); }, 60000);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) paintSky(localHour());
+  });
+
   var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var reveals = document.querySelectorAll('.reveal');
   var heroTitle = document.querySelector('.hero__title');
@@ -486,4 +535,211 @@
       });
     }, { threshold: .02 }).observe(section);
   });
+})();
+
+/* ============================================================
+   Ambient fireworks, left margin
+   Sparse, low-poly bursts in the free space beside the centred
+   chapters. One canvas, no DPR scaling, paused when idle.
+   ============================================================ */
+(function skyworks() {
+  var canvas = document.querySelector('.skyworks');
+  if (!canvas || window.innerWidth < 1200) return;
+  var ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+  var palette = [
+    [246, 237, 225], [246, 178, 74], [182, 90, 124],
+    [172, 130, 180], [156, 199, 192], [206, 33, 24]
+  ];
+  var sparks = [], rockets = [], flashes = [];
+  var w = 0, h = 0, raf = 0, timer = 0, last = 0;
+
+  function random(min, max) { return min + Math.random() * (max - min); }
+  function rgba(c, a) { return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+  function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+
+  function enabled() {
+    return !reduce.matches && !document.hidden && window.innerWidth >= 1200;
+  }
+
+  function resize() {
+    w = window.innerWidth;
+    h = window.innerHeight;
+    canvas.width = w;
+    canvas.height = h;
+    sparks = []; rockets = []; flashes = [];
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  }
+
+  function maxX() {
+    var head = document.querySelector('.chapter__head');
+    var left = head ? head.getBoundingClientRect().left : w * 0.2;
+    return Math.min(Math.max(90, left - 48), w * 0.26);
+  }
+
+  function explode(rocket) {
+    var scale = Math.min(Math.max(Math.min(w, h) / 820, 0.65), 1.35);
+    var count = Math.round(random(52, 82));
+    var base = random(1.8, 3.3);
+    var kind = Math.random();
+    if (kind < 0.18) {
+      count = Math.round(random(34, 48));
+      base = random(1.6, 2.2);
+    } else if (kind < 0.34) {
+      count = Math.round(random(50, 70));
+      base = random(1.1, 2.1);
+    }
+    for (var i = 0; i < count; i++) {
+      var angle = (kind < 0.18)
+        ? (i / count) * Math.PI * 2 + random(-0.03, 0.03)
+        : random(0, Math.PI * 2);
+      var speed = random(0.55, 1.35) * base;
+      sparks.push({
+        x: rocket.x, y: rocket.y,
+        vx: Math.cos(angle) * speed * scale,
+        vy: Math.sin(angle) * speed * scale,
+        life: random(50, 110), maxLife: 110,
+        color: (Math.random() < 0.25 && rocket.color2) ? rocket.color2 : rocket.color,
+        gravity: 0.035 * random(0.8, 1.2),
+        size: random(0.5, 1.7) * scale
+      });
+    }
+    if (sparks.length > 220) sparks = sparks.slice(-220);
+    flashes.push({ x: rocket.x, y: rocket.y, life: 1, color: rocket.color });
+  }
+
+  function launch() {
+    if (!enabled()) { schedule(6000); return; }
+    if (!w || !h) resize();
+    var limit = maxX();
+    if (limit < 90) { schedule(6000); return; }
+    var color = pick(palette);
+    rockets.push({
+      x: random(36, limit),
+      y: h * 0.94,
+      vx: random(-0.2, 0.2),
+      vy: -random(4.2, 6.4),
+      targetY: random(h * 0.18, h * 0.55),
+      color: color,
+      color2: Math.random() < 0.5 ? pick(palette) : null
+    });
+    if (Math.random() < 0.22) {
+      rockets.push({
+        x: random(36, limit),
+        y: h * 0.94,
+        vx: random(-0.2, 0.2),
+        vy: -random(4.2, 6.4),
+        targetY: random(h * 0.18, h * 0.52),
+        color: pick(palette),
+        color2: null
+      });
+    }
+    if (!raf) { last = performance.now(); raf = requestAnimationFrame(frame); }
+    schedule(random(5500, 12000));
+  }
+
+  function schedule(delay) {
+    clearTimeout(timer);
+    timer = setTimeout(launch, delay);
+  }
+
+  function frame(now) {
+    var dt = Math.min(now - last, 48);
+    last = now;
+    var step = Math.min(dt / 16.667, 2);
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (var r = 0; r < rockets.length; r++) {
+      var rocket = rockets[r];
+      rocket.x += rocket.vx * step;
+      rocket.y += rocket.vy * step;
+      ctx.strokeStyle = rgba([246, 237, 225], 0.34);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(rocket.x, rocket.y + 13);
+      ctx.lineTo(rocket.x, rocket.y + 2);
+      ctx.stroke();
+      ctx.fillStyle = rgba([246, 237, 225], 0.9);
+      ctx.beginPath();
+      ctx.arc(rocket.x, rocket.y, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    var burst = rockets.filter(function (rocket) { return rocket.y <= rocket.targetY; });
+    rockets = rockets.filter(function (rocket) { return rocket.y > rocket.targetY; });
+    for (var b = 0; b < burst.length; b++) explode(burst[b]);
+
+    for (var s = 0; s < sparks.length; s++) {
+      var spark = sparks[s];
+      spark.vx *= Math.pow(0.99, step);
+      spark.vy = spark.vy * Math.pow(0.99, step) + spark.gravity * step;
+      spark.x += spark.vx * step;
+      spark.y += spark.vy * step;
+      spark.life -= step;
+      var alpha = Math.max(0, spark.life / spark.maxLife);
+      ctx.strokeStyle = rgba(spark.color, alpha * 0.5);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(spark.x - spark.vx * 2.2, spark.y - spark.vy * 2.2);
+      ctx.lineTo(spark.x, spark.y);
+      ctx.stroke();
+      ctx.fillStyle = rgba(spark.color, alpha * 0.9);
+      ctx.beginPath();
+      ctx.arc(spark.x, spark.y, spark.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    sparks = sparks.filter(function (spark) { return spark.life > 0 && spark.y < h + 30; });
+
+    for (var f = 0; f < flashes.length; f++) {
+      var flash = flashes[f];
+      flash.life -= 0.06 * step;
+      ctx.fillStyle = rgba(flash.color, flash.life * 0.1);
+      ctx.beginPath();
+      ctx.arc(flash.x, flash.y, 14 + (1 - flash.life) * 46, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    flashes = flashes.filter(function (flash) { return flash.life > 0; });
+
+    ctx.globalCompositeOperation = 'source-over';
+    if (rockets.length || sparks.length || flashes.length) {
+      raf = requestAnimationFrame(frame);
+    } else {
+      raf = 0;
+      ctx.clearRect(0, 0, w, h);
+    }
+  }
+
+  resize();
+  window.addEventListener('resize', function () {
+    resize();
+    if (!timer) schedule(2500);
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      clearTimeout(timer);
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      sparks = []; rockets = []; flashes = [];
+      ctx.clearRect(0, 0, w, h);
+    } else {
+      schedule(1800);
+    }
+  });
+  reduce.addEventListener('change', function () {
+    if (reduce.matches) {
+      clearTimeout(timer);
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      sparks = []; rockets = []; flashes = [];
+      ctx.clearRect(0, 0, w, h);
+    } else {
+      schedule(1800);
+    }
+  });
+
+  schedule(2400);
 })();
